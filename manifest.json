@@ -1,0 +1,43 @@
+{
+    "name": "screen_monitor",
+    "description": "主人屏幕动态实时视觉监测插件，结合VLM分析提供弱注入背景",
+    "version": "1.0.0",
+    "author": "可可",
+    "dependencies": {
+        "plugins": [],
+        "components": []
+    },
+    "include": [
+        {
+            "component_type": "service",
+            "component_name": "screen_monitor",
+            "dependencies": [],
+            "enabled": true
+        },
+        {
+            "component_type": "event_handler",
+            "component_name": "screen_monitor_startup",
+            "dependencies": [],
+            "enabled": true
+        },
+        {
+            "component_type": "config",
+            "component_name": "config",
+            "dependencies": [],
+            "enabled": true
+        }
+    ],
+    "entry_point": "plugin.py",
+    "min_core_version": "1.0.0",
+    "python_dependencies": [
+        "mss",
+        "pillow"
+    ],
+    "dependencies_required": true,
+    "categories": [
+        "information"
+    ],
+    "tags": [
+        "fun"
+    ]
+}
