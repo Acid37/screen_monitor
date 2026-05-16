@@ -3,33 +3,66 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any
 
 from src.app.plugin_system.api.log_api import get_logger
-from src.core.prompt import PROMPT_BUILD_EVENT
 from src.kernel.event import EventDecision
 
 from .config import ScreenMonitorConfig
 from .observation_store import ScreenObservationStore
-from .stable_summary_store import StableSummaryStore
 
 logger = get_logger("screen_monitor")
 
 _DEFAULT_CHATTER_PROMPT = "default_chatter_user_prompt"
 _KFC_PROMPT = "kfc_user_prompt"
+_VOICE_CHATTER_PROMPT = "voice_chatter_user_prompt"
 
 
-def _build_injected_text(observation_text: str) -> str:
-    """构造注入文本。"""
-    return f"近期屏幕观察：\n- {observation_text}"
+def _normalize_names(names: list[str]) -> set[str]:
+    """去除空白并返回名称集合。"""
+    return {name for name in names if isinstance(name, str) and name.strip()}
 
 
-def _build_stable_summary(source_texts: list[str]) -> str:
-    """构造稳定摘要文本。"""
-    bullet_lines = [f"- {text}" for text in source_texts if text.strip()]
-    if not bullet_lines:
-        return ""
-    return "近期屏幕动态摘要：\n" + "\n".join(bullet_lines)
+def _resolve_target_prompt_names(config: ScreenMonitorConfig) -> set[str]:
+    """解析当前可注入的 prompt 名称集合（静态参考值）。"""
+    explicit_enabled = _normalize_names(config.inject.enabled_prompt_names)
+    if explicit_enabled:
+        return explicit_enabled.difference(_normalize_names(config.inject.disabled_prompt_names))
+
+    static_targets = {
+        _DEFAULT_CHATTER_PROMPT,
+        _KFC_PROMPT,
+        _VOICE_CHATTER_PROMPT,
+    }
+    return static_targets.difference(_normalize_names(config.inject.disabled_prompt_names))
+
+
+def _format_observation_time(timestamp: float) -> str:
+    """格式化观测时间点。"""
+    dt = datetime.fromtimestamp(timestamp)
+    now = datetime.now()
+    if dt.date() == now.date():
+        return dt.strftime("%H:%M:%S")
+    return dt.strftime("%m-%d %H:%M:%S")
+
+
+def _build_observation_lines(items: list[tuple[float, str]]) -> list[str]:
+    """将观测记录转换为可注入的行文本。"""
+    lines: list[str] = []
+    for timestamp, text in items:
+        cleaned_text = text.strip()
+        if not cleaned_text:
+            continue
+        lines.append(f"- {_format_observation_time(timestamp)}：{cleaned_text}")
+    return lines
+
+
+def _render_prompt_template(template: str, observation_text: str, recent_count: int) -> str:
+    """渲染注入模板。"""
+    return (
+        template.replace("{observation}", observation_text).replace("{recent_count}", str(recent_count))
+    )
 
 
 async def screen_monitor_prompt_injector(
@@ -43,49 +76,37 @@ async def screen_monitor_prompt_injector(
     if not isinstance(config, ScreenMonitorConfig):
         return EventDecision.SUCCESS, params
 
-    observation = ScreenObservationStore.get_instance().get_latest(time.time())
-    if observation is None:
+    now_ts = time.time()
+    store = ScreenObservationStore.get_instance()
+    recent_observations = store.get_recent_valid(now_ts, config.inject.summary_max_items)
+    if not recent_observations:
         if config.debug.log_injection_result:
             logger.info(f"未注入屏幕观察：prompt={prompt_name}，原因=无有效 observation")
         return EventDecision.SUCCESS, params
 
-    injected_text = _build_injected_text(observation.text)
-    if config.inject.use_stable_summary:
-        recent = ScreenObservationStore.get_instance().get_recent_valid(
-            time.time(),
-            config.inject.summary_max_items,
-        )
-        source_texts = [item.text for item in recent]
-        stable_store = StableSummaryStore.get_instance()
-        if stable_store.should_refresh(
-            source_texts,
-            config.inject.summary_min_refresh_minutes,
-        ):
-            summary_text = _build_stable_summary(source_texts)
-            if summary_text:
-                stable_store.update(summary_text, source_texts)
-        stable_summary = stable_store.get().text
-        if stable_summary:
-            injected_text = stable_summary
-
-    if prompt_name == _DEFAULT_CHATTER_PROMPT and config.inject.enable_default_chatter:
-        existing_extra: str = values.get("extra", "") or ""
-        separator = "\n\n" if existing_extra else ""
-        values["extra"] = existing_extra + separator + injected_text
-        params["values"] = values
+    target_prompt_names = _resolve_target_prompt_names(config)
+    if prompt_name not in target_prompt_names:
         if config.debug.log_injection_result:
-            logger.info("已向 default_chatter 后置注入屏幕观察")
+            logger.info(f"未注入屏幕观察：prompt={prompt_name}，原因=不在可注入列表")
         return EventDecision.SUCCESS, params
 
-    if prompt_name == _KFC_PROMPT and config.inject.enable_kokoro_flow_chatter:
-        existing_extra: str = values.get("extra", "") or ""
-        separator = "\n\n" if existing_extra else ""
-        values["extra"] = existing_extra + separator + injected_text
-        params["values"] = values
+    recent_items = [(item.timestamp, item.text) for item in recent_observations]
+    observation_lines = _build_observation_lines(recent_items)
+    if not observation_lines:
         if config.debug.log_injection_result:
-            logger.info("已向 kokoro_flow_chatter 追加屏幕观察 extra payload")
+            logger.info(f"未注入屏幕观察：prompt={prompt_name}，原因=无可注入内容")
         return EventDecision.SUCCESS, params
 
+    injected_text = _render_prompt_template(
+        config.inject.prompt_template,
+        "\n".join(observation_lines),
+        len(observation_lines),
+    )
+
+    existing_extra: str = values.get("extra", "") or ""
+    separator = "\n\n" if existing_extra else ""
+    values["extra"] = existing_extra + separator + injected_text
+    params["values"] = values
     if config.debug.log_injection_result:
-        logger.info(f"未注入屏幕观察：prompt={prompt_name}，原因=目标未启用或模板不匹配")
+        logger.info(f"已向 prompt={prompt_name} 后置注入屏幕观察")
     return EventDecision.SUCCESS, params

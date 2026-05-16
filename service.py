@@ -16,7 +16,6 @@ from PIL import ImageChops, ImageStat
 from src.app.plugin_system.base import BaseService
 from src.app.plugin_system.api.llm_api import get_model_set_by_name, get_model_set_by_task
 from src.app.plugin_system.api.log_api import get_logger
-from src.app.plugin_system.api.prompt_api import add_system_reminder
 from src.kernel.llm import LLMRequest, ROLE
 from src.kernel.llm.payload import Image, LLMPayload, Text
 
@@ -54,47 +53,20 @@ class ScreenMonitorService(BaseService):
         if isinstance(config, ScreenMonitorConfig) and config.monitor.log_enabled:
             logger.info(message)
 
-    def update_observation(self, text: str, retention_hours: int) -> None:
-        """更新最新屏幕观测缓存并同步到 system reminder。"""
+    def update_observation(self, text: str, retention_seconds: int) -> None:
+        """更新最新屏幕观测缓存。"""
         now_ts = time.time()
-        had_previous = self.observation_store.get_latest(now_ts) is not None
         self.observation_store.set_latest(
             ScreenObservation(
                 text=text,
                 timestamp=now_ts,
-                expires_at=now_ts + retention_hours * 3600,
+                expires_at=now_ts + retention_seconds,
             )
         )
 
-        # 同步写入 system reminder，由框架自动注入到所有 chatter 的 LLM 上下文
-        reminder_text = self._build_reminder_text()
-        if reminder_text:
-            add_system_reminder(_SCREEN_REMINDER_BUCKET, _SCREEN_REMINDER_NAME, reminder_text)
-        else:
-            # 观测已过期，清理 reminder 避免注入过时信息
-            from src.core.prompt import get_system_reminder_store
-            get_system_reminder_store().delete(_SCREEN_REMINDER_BUCKET, _SCREEN_REMINDER_NAME)
-
-        if not had_previous:
-            self._info("[Screen Monitor] 首条屏幕观察已就绪，已通过 system reminder 全局注入")
-
-    def _build_reminder_text(self) -> str:
-        """构建注入到 system reminder 的屏幕观察文本。"""
-        config = getattr(self.plugin, "config", None)
-        if not isinstance(config, ScreenMonitorConfig):
-            return ""
-
-        observation = self.observation_store.get_latest(time.time())
-        if observation is None:
-            return ""
-
-        return config.inject.prompt_template.format(observation=observation.text)
-
     def clear_observation(self) -> None:
-        """清理最新屏幕观测缓存及 system reminder。"""
+        """清理最新屏幕观测缓存。"""
         self.observation_store.clear()
-        from src.core.prompt import get_system_reminder_store
-        get_system_reminder_store().delete(_SCREEN_REMINDER_BUCKET, _SCREEN_REMINDER_NAME)
 
     def capture_screen_sync(self) -> tuple[str, PilImage.Image, str | None] | None:
         """同步截屏并返回图像与差异缩略图。"""
@@ -178,9 +150,9 @@ class ScreenMonitorService(BaseService):
                     if old_status:
                         await self.storage.save_status(
                             old_status,
-                            config.monitor.retention_hours,
+                            config.monitor.get_retention_seconds(),
                         )
-                        self.update_observation(old_status, config.monitor.retention_hours)
+                        self.update_observation(old_status, config.monitor.get_retention_seconds())
                     return
 
             self.last_thumbnail = current_thumb
@@ -206,8 +178,8 @@ class ScreenMonitorService(BaseService):
             result_text = (response.message or "").replace("\n", " ").strip()
             self._info(f"[Screen Monitor] 分析结果: {result_text}")
 
-            await self.storage.save_status(result_text, config.monitor.retention_hours)
-            self.update_observation(result_text, config.monitor.retention_hours)
+            await self.storage.save_status(result_text, config.monitor.get_retention_seconds())
+            self.update_observation(result_text, config.monitor.get_retention_seconds())
             self._info("[Screen Monitor] 状态已写入存储并更新 observation cache")
         except Exception as exc:
             logger.error(f"[Screen Monitor] task failed: {exc}")

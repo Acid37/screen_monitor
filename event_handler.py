@@ -16,10 +16,10 @@ from .config import ScreenMonitorConfig
 logger = get_logger("screen_monitor")
 
 
-async def _delayed_first_run(plugin: Any, delay_minutes: int) -> None:
+async def _delayed_first_run(plugin: Any, delay_seconds: int) -> None:
     """后台执行首次延迟分析。"""
-    if delay_minutes > 0:
-        await asyncio.sleep(delay_minutes * 60)
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
 
     service = getattr(plugin, "_service", None)
     config = getattr(plugin, "config", None)
@@ -55,27 +55,27 @@ class ScreenMonitorStartupHandler(BaseEventHandler):
             plugin.schedule_id = await plugin.scheduler.create_schedule(
                 callback=service.run_monitor_task,
                 trigger_type=plugin.trigger_type,
-                trigger_config={"interval_seconds": config.monitor.interval_minutes * 60},
+                trigger_config={"interval_seconds": config.monitor.get_interval_seconds()},
                 task_name="screen_monitor_job",
                 is_recurring=True,
                 callback_args=(),
             )
             if config.monitor.log_enabled:
                 logger.info(
-                    f"已注册屏幕监控调度：每 {config.monitor.interval_minutes} 分钟执行一次"
+                    f"已注册屏幕监控调度：每 {config.monitor.interval_seconds} 秒执行一次"
                 )
                 logger.info(
                     f"屏幕监控已启动：首次执行={config.monitor.run_once_on_start}，"
-                    f"下次执行约 {config.monitor.interval_minutes} 分钟后"
+                    f"下次执行约 {config.monitor.interval_seconds} 秒后"
                 )
 
             if config.monitor.run_once_on_start:
                 if config.monitor.log_enabled:
                     logger.info(
-                        f"已启用首次执行：{config.monitor.run_once_delay_minutes} 分钟后开始首次分析"
+                        f"已启用首次执行：{config.monitor.run_once_delay_seconds} 秒后开始首次分析"
                     )
                 task = get_task_manager().create_task(
-                    _delayed_first_run(plugin, config.monitor.run_once_delay_minutes),
+                    _delayed_first_run(plugin, config.monitor.get_run_once_delay_seconds()),
                     name="screen_monitor_first_run",
                     daemon=True,
                 )

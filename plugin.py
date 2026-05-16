@@ -13,6 +13,7 @@ from .service import ScreenMonitorService
 
 logger = get_logger("screen_monitor")
 
+
 @register_plugin
 class ScreenMonitorPlugin(BasePlugin):
     plugin_name: str = "screen_monitor"
@@ -38,12 +39,12 @@ class ScreenMonitorPlugin(BasePlugin):
             self._service = ScreenMonitorService(self)
             old_status = await self._service.storage.get_valid_status()
             if old_status:
-                self._service.update_observation(old_status, self.config.monitor.retention_hours)
+                self._service.update_observation(old_status, self.config.monitor.get_retention_seconds())
 
             if self.config.monitor.log_enabled:
                 logger.info(
                     f"Screen monitor plugin loaded, waiting for scheduler start: "
-                    f"interval={self.config.monitor.interval_minutes}m, "
+                    f"interval={self.config.monitor.interval_seconds}s, "
                     f"model_task={self.config.model.model_task}, "
                     f"models={self.config.model.models or ['<use task>']}, "
                     f"save_screenshot={self.config.monitor.save_screenshot}"

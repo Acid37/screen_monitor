@@ -18,10 +18,19 @@ class ScreenMonitorConfig(BaseConfig):
         """监控主配置。"""
 
         enabled: bool = Field(default=True, description="是否开启屏幕监控")
-        interval_minutes: int = Field(default=10, description="屏幕监控周期（分钟）")
+        interval_seconds: int = Field(
+            default=600,
+            description="屏幕监控周期（600s，默认 10 分钟）",
+        )
         run_once_on_start: bool = Field(default=False, description="是否在启动完成后立即执行一次屏幕分析")
-        run_once_delay_minutes: int = Field(default=1, description="启动后首次分析延迟分钟数，仅在 run_once_on_start=true 时生效")
-        retention_hours: int = Field(default=2, description="状态过期时间（小时）。较早前拿到的状态会自动失效")
+        run_once_delay_seconds: int = Field(
+            default=60,
+            description="启动后首次分析延迟秒数（60s，默认 1 分钟）",
+        )
+        retention_seconds: int = Field(
+            default=7200,
+            description="状态过期时间（7200s，默认 2 小时）",
+        )
         save_screenshot: bool = Field(default=False, description="是否将截图保存到 data/screenshots 目录")
         monitor_index: int = Field(default=1, description="截取的显示器索引，1=主显示器")
         image_max_width: int = Field(default=1024, description="发送给 VLM 前的图片最大宽度")
@@ -40,6 +49,18 @@ class ScreenMonitorConfig(BaseConfig):
         )
         log_enabled: bool = Field(default=True, description="是否输出插件运行日志")
 
+        def get_interval_seconds(self) -> int:
+            """获取实际调度间隔（秒）。"""
+            return max(1, self.interval_seconds)
+
+        def get_run_once_delay_seconds(self) -> int:
+            """获取首次执行延迟（秒）。"""
+            return max(0, self.run_once_delay_seconds)
+
+        def get_retention_seconds(self) -> int:
+            """获取状态保留时长（秒）。"""
+            return max(0, self.retention_seconds)
+
     @config_section("model")
     class ModelSection(SectionBase):
         """模型选择配置。"""
@@ -53,13 +74,34 @@ class ScreenMonitorConfig(BaseConfig):
     class InjectSection(SectionBase):
         """注入配置。"""
 
+        enabled_prompt_names: list[str] = Field(
+            default_factory=lambda: [
+                "default_chatter_user_prompt",
+                "kfc_user_prompt",
+                "voice_chatter_user_prompt",
+            ],
+            description="启用的 prompt 名称列表（静态参考值）",
+        )
+        disabled_prompt_names: list[str] = Field(
+            default_factory=list,
+            description="禁用的 prompt 名称列表，用于从参考值中剔除",
+        )
+        summary_max_items: int = Field(default=2, description="最近观测注入条数（可选配置，默认 2 条，供 LLM 自行综合）")
         prompt_template: str = Field(
             default=(
-                "这是对用户屏幕的实时观测，可帮助你感知用户当前在做什么，仅作参考：\n{observation}"
+                "这是对用户屏幕的实时观测，可帮助你感知用户当前在做什么，仅作参考。"
+                "你可以结合最近 {recent_count} 次观测综合后再回复：\n{observation}"
             ),
-            description="注入到 LLM 上下文的模板，{observation} 会被替换为观测文本",
+            description="注入到 LLM 上下文的模板，{recent_count} 会被替换为最近注入条数，{observation} 会被替换为观测文本",
         )
+
+    @config_section("debug")
+    class DebugSection(SectionBase):
+        """调试配置。"""
+
+        log_injection_result: bool = Field(default=False, description="是否输出注入结果日志")
 
     monitor: MonitorSection = Field(default_factory=MonitorSection)
     model: ModelSection = Field(default_factory=ModelSection)
     inject: InjectSection = Field(default_factory=InjectSection)
+    debug: DebugSection = Field(default_factory=DebugSection)
