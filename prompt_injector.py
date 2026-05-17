@@ -71,8 +71,14 @@ async def screen_monitor_prompt_injector(
     """在支持的 chatter prompt 构建时按目标模板注入屏幕观测。"""
     prompt_name = params.get("name")
     values: dict[str, Any] = params.get("values", {})
-    plugin = params.get("plugin")
-    config = getattr(plugin, "config", None)
+    
+    # 获取 screen_monitor 插件实例和配置
+    from src.app.plugin_system.api.plugin_api import get_plugin
+    screen_monitor_plugin = get_plugin("screen_monitor")
+    if screen_monitor_plugin is None:
+        return EventDecision.SUCCESS, params
+    
+    config = getattr(screen_monitor_plugin, "config", None)
     if not isinstance(config, ScreenMonitorConfig):
         return EventDecision.SUCCESS, params
 

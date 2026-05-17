@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
-from src.app.plugin_system.base import BasePlugin, register_plugin
+from typing import Any
+
+from src.app.plugin_system.base import BasePlugin, BaseEventHandler, register_plugin
 from src.app.plugin_system.api.log_api import get_logger
 from src.kernel.concurrency import get_task_manager
+from src.kernel.event import EventDecision
 from src.kernel.scheduler import get_unified_scheduler, TriggerType
 
 from .config import ScreenMonitorConfig
 from .event_handler import ScreenMonitorStartupHandler
 from .service import ScreenMonitorService
+from .prompt_injector import screen_monitor_prompt_injector
 
 logger = get_logger("screen_monitor")
+
+
+class ScreenMonitorPromptHandler(BaseEventHandler):
+    """处理 on_prompt_build 事件，注入屏幕观测。"""
+
+    handler_name = "screen_monitor_prompt_injector"
+    handler_description = "在 prompt 构建时注入屏幕观测"
+    init_subscribe = ["on_prompt_build"]  # ← 字符串，不是 EventType
+
+    async def execute(
+        self, event_name: str, params: dict[str, Any]
+    ) -> tuple[EventDecision, dict[str, Any]]:
+        """执行 prompt 注入。"""
+        return await screen_monitor_prompt_injector(event_name, params)
 
 
 @register_plugin
@@ -32,7 +50,7 @@ class ScreenMonitorPlugin(BasePlugin):
         self._service: ScreenMonitorService | None = None
 
     def get_components(self) -> list[type]:
-        return [ScreenMonitorService, ScreenMonitorStartupHandler]
+        return [ScreenMonitorService, ScreenMonitorStartupHandler, ScreenMonitorPromptHandler]
 
     async def on_plugin_loaded(self) -> None:
         if isinstance(self.config, ScreenMonitorConfig) and self.config.monitor.enabled:
